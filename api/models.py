@@ -1,5 +1,5 @@
 from django.db import models
-from django.db.models import JSONField # Make sure to use the appropriate JSONField for your Django version
+from django.db.models import JSONField
 
 class User(models.Model):
     user_id = models.BigIntegerField(unique=True, primary_key=True)

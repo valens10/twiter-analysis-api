@@ -183,69 +183,54 @@ class UserRecommendationView(APIView):
                     Q(in_reply_to_user_id=user_id) | Q(retweeted_status__user_id=user_id)
                 )
 
-            # Compute interaction score based on replies and retweets
-            interaction_score_subquery = contact_tweets.annotate(
-                reply_count=Count(Case(When(in_reply_to_user_id=user_id, then=1))),
-                retweet_counts=Count(Case(When(retweeted_status__user_id=user_id, then=1)))
-            ).annotate(
-                interaction_score=Log(Value(2), F('reply_count') + F('retweet_counts') + 1)
-            ).values('interaction_score')
-
-            # Compute hashtag score
-            hashtag_score_subquery = contact_tweets.annotate(
-                hashtag_count=Count(
-                    Case(
-                        When(hashtags__text__in=EXCLUDED_HASHTAGS, then=0),
-                        default=1
-                    )
-                )
-            ).annotate(
-                hashtag_score=Case(
-                    When(hashtag_count__gt=10, then=1 + Log(Value(2), F('hashtag_count') - 10)),
-                    default=Value(1),
-                    output_field=FloatField()
-                )
-            ).values('hashtag_score')
-
-            # Annotate tweet text with phrase and hashtag counts outside ORM
-            def count_phrase_and_hashtags(tweet_queryset):
+            # Compute scores for each tweet
+            def compute_scores(tweet_queryset):
                 results = []
                 for tweet in tweet_queryset:
+                    # Calculate interaction score
+                    reply_count = tweet.in_reply_to_user_id == user_id
+                    retweet_count = tweet.retweeted_status is not None and tweet.retweeted_status.user_id == user_id
+                    interaction_score = 1 + Log(Value(2), (reply_count + retweet_count) + 1)
+                    
+                    # Calculate hashtag score
+                    hashtags = Hashtag.objects.filter(tweet=tweet)
+                    hashtag_count = sum(1 for h in hashtags if h.text not in EXCLUDED_HASHTAGS)
+                    hashtag_score = Case(
+                        When(hashtag_count__gt=10, then=1 + Log(Value(2), hashtag_count - 10)),
+                        default=Value(1),
+                        output_field=FloatField()
+                    )
+                    
+                    # Calculate phrase count
                     tweet_text = tweet.text
                     phrase_count = len(re.findall(re.escape(phrase), tweet_text, re.IGNORECASE))
-                    hashtag_count = len(Hashtag.objects.filter(tweet=tweet, text__iexact=hashtag))
+                    
+                    # Compute final score
+                    keyword_score = 1 + Log(Value(2), phrase_count + hashtag_count + 1)
+                    
                     results.append({
                         'tweet': tweet,
-                        'phrase_count': phrase_count,
-                        'hashtag_count': hashtag_count
+                        'interaction_score': interaction_score,
+                        'hashtag_score': hashtag_score,
+                        'keyword_score': keyword_score
                     })
                 return results
 
-            # Get phrase and hashtag counts for contact tweets
-            contact_tweets_with_counts = count_phrase_and_hashtags(contact_tweets)
+            # Get scores for contact tweets
+            contact_tweets_with_scores = compute_scores(contact_tweets)
 
-            # Compute the total number of matches
-            total_phrase_matches = sum(t['phrase_count'] for t in contact_tweets_with_counts)
-            total_hashtag_matches = sum(t['hashtag_count'] for t in contact_tweets_with_counts)
-            number_of_matches = total_phrase_matches + total_hashtag_matches
+            # Rank tweets based on computed scores
+            ranked_tweets = sorted(contact_tweets_with_scores, key=lambda x: (
+                x['interaction_score'] + x['hashtag_score'] + x['keyword_score']
+            ), reverse=True)
 
-            # Compute the keyword score
-            keyword_score = 1 + Log(Value(2), number_of_matches + 1)
-
-            # Annotate final score
-            final_tweets = [ctw['tweet'] for ctw in contact_tweets_with_counts]
-            final_tweets = [t for t in final_tweets if t is not None]  # Filter out None tweets
-            
-            # Compute interaction score and hashtag score for final tweets
-            final_tweets = [t for t in final_tweets if t.final_score > 0]  # Placeholder for actual score computation
-            
-            # Exclude tweets from the requesting user and select relevant fields
+            # Select top tweets, excluding the requesting user
             tweets_data = [{
-                'user_id': tweet.user.user_id,
-                'screen_name': tweet.user.screen_name,
-                'description': tweet.user.description,
-                'contact_tweet_text': tweet.text
-            } for tweet in final_tweets if tweet.user_id != user_id][:10]
+                'user_id': tweet_data['tweet'].user.user_id,
+                'screen_name': tweet_data['tweet'].user.screen_name,
+                'description': tweet_data['tweet'].user.description,
+                'contact_tweet_text': tweet_data['tweet'].text
+            } for tweet_data in ranked_tweets if tweet_data['tweet'].user_id != user_id][:10]
 
             # Format response
             return Response(tweets_data)
