@@ -18,8 +18,8 @@ import json
 # List of hashtags to exclude from the hashtag score calculation
 popular_hashtags = './datasets/popular_hashtags.json'
 EXCLUDED_HASHTAGS = ['zipcode', 'rwanda']
-TEAM_ID = "<YOUR_TEAM_ID>"
-TEAM_AWS_ACCOUNT_ID = "<YOUR_AWS_ACCOUNT_ID>"
+TEAM_ID = "TEAM_ID"
+TEAM_AWS_ACCOUNT_ID = "TEAM_AWS_ACCOUNT_ID"
 
 
 class UserPagination(PageNumberPagination):

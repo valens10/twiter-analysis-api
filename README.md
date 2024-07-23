@@ -47,6 +47,9 @@ Welcome to the Twitter Data Analysis Service! This project was developed as part
    ```
 
 5. Ensure the dataset is in the `datasets` folder.
+   ```
+      ![alt text](image.png)
+   ```
 
 6. Load the initial data:
    ```
